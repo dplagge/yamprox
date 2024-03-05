@@ -3,12 +3,11 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"sync"
 )
-
-const maxBufferSize = 2 << 20
 
 type ModbusPDU struct {
 	transaction uint16
@@ -51,7 +50,7 @@ func sender(ch chan ModbusRequest) {
 	}
 }
 
-func senderResponseHandler(conn net.Conn, mappings *sync.Map) {
+func senderResponseHandler(conn io.Reader, mappings *sync.Map) {
 	for {
 		pdu, err := readPdu(conn)
 		if err != nil {
@@ -71,7 +70,7 @@ func (pdu ModbusPDU) replaceTransaction(newTransId uint16) ModbusPDU {
 	return ModbusPDU{newTransId, -pdu.protocol, pdu.unit, pdu.data}
 }
 
-func writePdu(transactionId uint16, pdu ModbusPDU, conn net.Conn) {
+func writePdu(transactionId uint16, pdu ModbusPDU, conn io.Writer) {
 	header := createPdu(transactionId, pdu)
 	conn.Write(header)
 	conn.Write(pdu.data)
@@ -86,7 +85,7 @@ func createPdu(transactionId uint16, pdu ModbusPDU) []byte {
 	return header
 }
 
-func readPdu(conn net.Conn) (pdu *ModbusPDU, err error) {
+func readPdu(conn io.Reader) (pdu *ModbusPDU, err error) {
 	header := make([]byte, 7)
 	n, err := conn.Read(header)
 	if err != nil {
@@ -120,7 +119,7 @@ func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan
 	}
 }
 
-func clientResponseHandler(conn net.Conn, fromServer chan ModbusPDU) {
+func clientResponseHandler(conn io.Writer, fromServer chan ModbusPDU) {
 	for {
 		pdu := <-fromServer
 		writePdu(pdu.transaction, pdu, conn)
@@ -144,7 +143,7 @@ func ModbusListener() {
 			log.Printf("Accepted connection from %v", conn.RemoteAddr())
 			responses := make(chan ModbusPDU)
 			go clientResponseHandler(conn, responses)
-			clientRequestHandler(conn, responses, requests)
+			go clientRequestHandler(conn, responses, requests)
 		}
 	}
 }
