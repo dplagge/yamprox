@@ -74,7 +74,7 @@ func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logge
 }
 
 func (pdu ModbusPDU) replaceTransaction(newTransId uint16) ModbusPDU {
-	return ModbusPDU{newTransId, -pdu.protocol, pdu.unit, pdu.data}
+	return ModbusPDU{newTransId, pdu.protocol, pdu.unit, pdu.data}
 }
 
 func writePdu(transactionId uint16, pdu ModbusPDU, conn io.Writer) {
