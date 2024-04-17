@@ -29,8 +29,7 @@ type ReplyHandler struct {
 	rep               chan ModbusPDU
 }
 
-func sender(ch chan ModbusRequest) {
-	serverAddr := "localhost:3333"
+func sender(ch chan ModbusRequest, serverAddr string) {
 	clog := log.With().Str("server", serverAddr).Logger()
 	clog.Info().Msgf("Connecting to server")
 	tcpAddr, err := net.ResolveTCPAddr("tcp", serverAddr)
@@ -141,14 +140,15 @@ func clientResponseHandler(conn io.Writer, fromServer chan ModbusPDU, clog zerol
 	}
 }
 
-func ModbusListener() {
-	l, err := net.Listen("tcp", ":2502")
+func ModbusListener(listenTo string, serverAddr string) {
+	log.Info().Str("localaddr", listenTo).Msgf("Listening for connections")
+	l, err := net.Listen("tcp", listenTo)
 	if err != nil {
 		log.Fatal().Msgf("%v", err)
 	}
 	defer l.Close()
 	requests := make(chan ModbusRequest)
-	go sender(requests)
+	go sender(requests, serverAddr)
 	for {
 		// Wait for a connection.
 		conn, err := l.Accept()
@@ -166,5 +166,5 @@ func ModbusListener() {
 }
 
 func main() {
-	ModbusListener()
+	ModbusListener(":2502", "localhost:3333")
 }
