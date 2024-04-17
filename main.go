@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type ModbusPDU struct {
@@ -29,19 +31,20 @@ type ReplyHandler struct {
 
 func sender(ch chan ModbusRequest) {
 	serverAddr := "localhost:3333"
-	log.Printf("Connecting to %v", serverAddr)
+	clog := log.With().Str("server", serverAddr).Logger()
+	clog.Info().Msgf("Connecting to server")
 	tcpAddr, err := net.ResolveTCPAddr("tcp", serverAddr)
 	if err != nil {
-		log.Fatalf("Error when looking up server %v: %v", serverAddr, err)
+		clog.Fatal().Msgf("Error when looking up server: %v", err)
 	}
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		log.Fatalf("Error connecting to %v: %v", serverAddr, err)
+		clog.Fatal().Msgf("Error connecting to server: %v", err)
 	}
 	defer conn.Close()
 
 	var mappings sync.Map
-	go senderResponseHandler(conn, &mappings)
+	go senderResponseHandler(conn, &mappings, clog)
 
 	var nextTransactionId uint16 = 1
 	for req := range ch {
@@ -52,21 +55,19 @@ func sender(ch chan ModbusRequest) {
 	}
 }
 
-func senderResponseHandler(conn net.Conn, mappings *sync.Map) {
+func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logger) {
 	for {
-		name := fmt.Sprintf("server %v", conn.RemoteAddr())
-		pdu, err := readPdu(name, conn)
+		pdu, err := readPdu(conn, clog)
 		if err != nil {
-			log.Printf("Error when reading response from %s: %v", name, err)
+			clog.Error().Msgf("Error when reading response: %v", err)
 			return
 		}
-		//log.Printf("Read PDU from server")
 		if entry, present := mappings.LoadAndDelete(pdu.transaction); present {
 			rh := entry.(ReplyHandler)
-			log.Printf("Read PDU from %s, server transaction=%d, client transaction=%d, data size=%d", name, pdu.transaction, rh.clientTransaction, len(pdu.data))
+			clog.Info().Uint16("servertransaction", pdu.transaction).Uint16("clienttransaction", rh.clientTransaction).Int("datasize", len(pdu.data)).Msg("Read PDU from server")
 			rh.rep <- pdu.replaceTransaction(rh.clientTransaction)
 		} else {
-			log.Printf("Unexpected transaction %v from %s, ignoring", pdu.transaction, name)
+			clog.Error().Msgf("Unexpected transaction %v, ignoring", pdu.transaction)
 		}
 	}
 }
@@ -78,9 +79,7 @@ func (pdu ModbusPDU) replaceTransaction(newTransId uint16) ModbusPDU {
 func writePdu(transactionId uint16, pdu ModbusPDU, conn io.Writer) {
 	header := createPduHeader(transactionId, pdu)
 	conn.Write(header)
-	//log.Printf("Wrote header, header length=%d", len(header))
 	conn.Write(pdu.data)
-	//log.Printf("Wrote data (data length=%d)", len(pdu.data))
 }
 
 func createPduHeader(transactionId uint16, pdu ModbusPDU) []byte {
@@ -92,14 +91,15 @@ func createPduHeader(transactionId uint16, pdu ModbusPDU) []byte {
 	return header
 }
 
-func readPdu(name string, conn io.Reader) (pdu *ModbusPDU, err error) {
+func readPdu(conn io.Reader, clog zerolog.Logger) (pdu *ModbusPDU, err error) {
 	header := make([]byte, 7)
 	n, err := io.ReadAtLeast(conn, header, 7)
 	if n < 7 {
 		if err != nil {
-			log.Printf("Error when reading header from connection %s: %v", name, err)
+			clog.Error().Msgf("Error when reading header: %v", err)
 		}
-		err = errors.New("Modbus header too short")
+		err = errors.New("modbus header too short")
+		return
 	}
 	transaction := binary.BigEndian.Uint16(header[0:2])
 	protocol := binary.BigEndian.Uint16(header[2:4])
@@ -110,33 +110,32 @@ func readPdu(name string, conn io.Reader) (pdu *ModbusPDU, err error) {
 	n, err = io.ReadAtLeast(conn, data, int(length)-1)
 	//log.Printf("Read %d data bytes", n)
 	if n < int(length)-1 {
-		log.Printf("Error when reading header from connection %s: %v", name, err)
-		err = errors.New("Modbus invalid data")
+		clog.Error().Msgf("Error when reading header: %v", err)
+		err = errors.New("modbus invalid data")
 		return
 	}
 	pdu = &ModbusPDU{transaction, protocol, unit, data}
 	err = nil
-	log.Printf("Read PDU from %s, transaction=%d, data size=%d", name, transaction, len(data))
 	return
 }
 
-func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan ModbusRequest) {
+func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan ModbusRequest, clog zerolog.Logger) {
 	defer conn.Close()
 	for {
-		name := fmt.Sprintf("client %v", conn.RemoteAddr())
-		pdu, err := readPdu(name, conn)
+		pdu, err := readPdu(conn, clog)
 		if err != nil {
-			log.Printf("Error when reading data from client: %v", err)
+			clog.Error().Msgf("Error when reading data from client: %v", err)
 			return
 		}
+		clog.Info().Uint16("clienttransaction", pdu.transaction).Int("datasize", len(pdu.data)).Msg("Received PDU from client")
 		toServer <- ModbusRequest{*pdu, responses}
 	}
 }
 
-func clientResponseHandler(conn net.Conn, fromServer chan ModbusPDU) {
+func clientResponseHandler(conn io.Writer, fromServer chan ModbusPDU, clog zerolog.Logger) {
 	for {
 		pdu := <-fromServer
-		log.Printf("Writing response to client %v, transaction=%d", conn.RemoteAddr(), pdu.transaction)
+		clog.Info().Uint16("clienttransaction", pdu.transaction).Msg("Writing response to client")
 		writePdu(pdu.transaction, pdu, conn)
 	}
 }
@@ -144,7 +143,7 @@ func clientResponseHandler(conn net.Conn, fromServer chan ModbusPDU) {
 func ModbusListener() {
 	l, err := net.Listen("tcp", ":2502")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Msgf("%v", err)
 	}
 	defer l.Close()
 	requests := make(chan ModbusRequest)
@@ -153,12 +152,14 @@ func ModbusListener() {
 		// Wait for a connection.
 		conn, err := l.Accept()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Msgf("%v", err)
 		} else {
-			log.Printf("Accepted connection from %v", conn.RemoteAddr())
+			addr := fmt.Sprintf("%v", conn.RemoteAddr())
+			clog := log.With().Str("client", addr).Logger()
+			clog.Info().Msg("Accepted connection")
 			responses := make(chan ModbusPDU)
-			go clientResponseHandler(conn, responses)
-			go clientRequestHandler(conn, responses, requests)
+			go clientResponseHandler(conn, responses, clog)
+			go clientRequestHandler(conn, responses, requests, clog)
 		}
 	}
 }
