@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/urfave/cli/v2"
 )
 
 type ModbusPDU struct {
@@ -166,5 +169,31 @@ func ModbusListener(listenTo string, serverAddr string) {
 }
 
 func main() {
-	ModbusListener(":2502", "localhost:3333")
+
+	app := &cli.App{
+		Flags: []cli.Flag{
+			&cli.IntFlag{
+				Name:  "port",
+				Value: 2502,
+				Usage: "port number to listen on",
+			},
+			&cli.StringFlag{
+				Name:  "interface",
+				Value: "",
+				Usage: "interface to listen on",
+			},
+		},
+		Action: func(cCtx *cli.Context) error {
+			server := cCtx.Args().Get(0)
+			port := cCtx.Int("port")
+			interf := cCtx.String("interface")
+			listenTo := fmt.Sprintf("%s:%d", interf, port)
+			ModbusListener(listenTo, server)
+			return nil
+		},
+	}
+
+	if err := app.Run(os.Args); err != nil {
+		log.Fatal().Msgf("%v", err)
+	}
 }
