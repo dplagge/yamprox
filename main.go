@@ -50,6 +50,7 @@ func sender(ch chan ModbusRequest) {
 	for req := range ch {
 		pdu := req.pdu
 		writePdu(nextTransactionId, pdu, conn)
+		clog.Info().Uint16("clienttransaction", pdu.transaction).Uint16("servertransaction", nextTransactionId).Msg("Writing PDU to server")
 		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep})
 		nextTransactionId += 1
 	}
