@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -34,12 +35,19 @@ type ReplyHandler struct {
 
 func sender(ch chan ModbusRequest, serverAddr string) {
 	clog := log.With().Str("server", serverAddr).Logger()
+	for {
+		startServerLoop(ch, serverAddr, clog)
+		log.Info().Msg("Sender connection closed, retrying")
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func startServerLoop(ch chan ModbusRequest, serverAddr string, clog zerolog.Logger) {
 	conn := connectToServer(serverAddr, clog)
-	defer conn.Close()
 
 	var mappings sync.Map
-	go senderResponseHandler(conn, &mappings, clog)
-	sendRequestsToServer(ch, conn, &mappings, clog)
+	go sendRequestsToServer(ch, conn, &mappings, clog)
+	senderResponseHandler(conn, &mappings, clog)
 }
 
 func connectToServer(serverAddr string, clog zerolog.Logger) net.Conn {
@@ -67,6 +75,7 @@ func sendRequestsToServer(ch chan ModbusRequest, conn net.Conn, mappings *sync.M
 }
 
 func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logger) {
+	defer conn.Close()
 	for {
 		pdu, err := readPdu(conn, clog)
 		if err != nil {
