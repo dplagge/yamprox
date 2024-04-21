@@ -34,6 +34,15 @@ type ReplyHandler struct {
 
 func sender(ch chan ModbusRequest, serverAddr string) {
 	clog := log.With().Str("server", serverAddr).Logger()
+	conn := connectToServer(serverAddr, clog)
+	defer conn.Close()
+
+	var mappings sync.Map
+	go senderResponseHandler(conn, &mappings, clog)
+	sendRequestsToServer(ch, conn, &mappings, clog)
+}
+
+func connectToServer(serverAddr string, clog zerolog.Logger) net.Conn {
 	clog.Info().Msgf("Connecting to server")
 	tcpAddr, err := net.ResolveTCPAddr("tcp", serverAddr)
 	if err != nil {
@@ -43,16 +52,15 @@ func sender(ch chan ModbusRequest, serverAddr string) {
 	if err != nil {
 		clog.Fatal().Msgf("Error connecting to server: %v", err)
 	}
-	defer conn.Close()
+	return conn
+}
 
-	var mappings sync.Map
-	go senderResponseHandler(conn, &mappings, clog)
-
+func sendRequestsToServer(ch chan ModbusRequest, conn net.Conn, mappings *sync.Map, clog zerolog.Logger) {
 	var nextTransactionId uint16 = 1
 	for req := range ch {
 		pdu := req.pdu
 		writePdu(nextTransactionId, pdu, conn)
-		clog.Info().Uint16("clienttransaction", pdu.transaction).Uint16("servertransaction", nextTransactionId).Msg("Writing PDU to server")
+		clog.Debug().Uint16("clienttransaction", pdu.transaction).Uint16("servertransaction", nextTransactionId).Msg("Writing PDU to server")
 		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep})
 		nextTransactionId += 1
 	}
@@ -67,7 +75,7 @@ func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logge
 		}
 		if entry, present := mappings.LoadAndDelete(pdu.transaction); present {
 			rh := entry.(ReplyHandler)
-			clog.Info().Uint16("servertransaction", pdu.transaction).Uint16("clienttransaction", rh.clientTransaction).Int("datasize", len(pdu.data)).Msg("Read PDU from server")
+			clog.Debug().Uint16("servertransaction", pdu.transaction).Uint16("clienttransaction", rh.clientTransaction).Int("datasize", len(pdu.data)).Msg("Read PDU from server")
 			rh.rep <- pdu.replaceTransaction(rh.clientTransaction)
 		} else {
 			clog.Error().Msgf("Unexpected transaction %v, ignoring", pdu.transaction)
@@ -98,10 +106,12 @@ func readPdu(conn io.Reader, clog zerolog.Logger) (pdu *ModbusPDU, err error) {
 	header := make([]byte, 7)
 	n, err := io.ReadAtLeast(conn, header, 7)
 	if n < 7 {
-		if err != nil {
-			clog.Error().Msgf("Error when reading header: %v", err)
+		if err != io.EOF {
+			if err != nil {
+				clog.Error().Msgf("Error when reading header: %v", err)
+			}
+			err = errors.New("modbus header too short")
 		}
-		err = errors.New("modbus header too short")
 		return
 	}
 	transaction := binary.BigEndian.Uint16(header[0:2])
@@ -127,10 +137,14 @@ func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan
 	for {
 		pdu, err := readPdu(conn, clog)
 		if err != nil {
-			clog.Error().Msgf("Error when reading data from client: %v", err)
+			if err == io.EOF {
+				clog.Info().Msg("Client connection closed")
+			} else {
+				clog.Error().Msgf("Error when reading data from client: %v, closing connection", err)
+			}
 			return
 		}
-		clog.Info().Uint16("clienttransaction", pdu.transaction).Int("datasize", len(pdu.data)).Msg("Received PDU from client")
+		clog.Debug().Uint16("clienttransaction", pdu.transaction).Int("datasize", len(pdu.data)).Msg("Received PDU from client")
 		toServer <- ModbusRequest{*pdu, responses}
 	}
 }
@@ -138,7 +152,7 @@ func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan
 func clientResponseHandler(conn io.Writer, fromServer chan ModbusPDU, clog zerolog.Logger) {
 	for {
 		pdu := <-fromServer
-		clog.Info().Uint16("clienttransaction", pdu.transaction).Msg("Writing response to client")
+		clog.Debug().Uint16("clienttransaction", pdu.transaction).Msg("Writing response to client")
 		writePdu(pdu.transaction, pdu, conn)
 	}
 }
@@ -171,6 +185,8 @@ func ModbusListener(listenTo string, serverAddr string) {
 func main() {
 
 	app := &cli.App{
+		Name:  "modbusproxy",
+		Usage: "modbusproxy <server:port>\nCreates a proxy for a modbus server: modbus",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:  "port",
@@ -182,12 +198,27 @@ func main() {
 				Value: "",
 				Usage: "interface to listen on",
 			},
+			&cli.BoolFlag{
+				Name:  "debug",
+				Value: false,
+				Usage: "debug logging",
+			},
 		},
 		Action: func(cCtx *cli.Context) error {
+			if cCtx.Args().Len() != 1 {
+				cli.ShowAppHelp(cCtx)
+				os.Exit(1)
+			}
 			server := cCtx.Args().Get(0)
 			port := cCtx.Int("port")
 			interf := cCtx.String("interface")
 			listenTo := fmt.Sprintf("%s:%d", interf, port)
+			debug := cCtx.Bool("debug")
+			if debug {
+				zerolog.SetGlobalLevel(zerolog.DebugLevel)
+			} else {
+				zerolog.SetGlobalLevel(zerolog.InfoLevel)
+			}
 			ModbusListener(listenTo, server)
 			return nil
 		},
