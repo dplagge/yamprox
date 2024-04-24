@@ -97,18 +97,17 @@ func (pdu ModbusPDU) replaceTransaction(newTransId uint16) ModbusPDU {
 }
 
 func writePdu(transactionId uint16, pdu ModbusPDU, conn io.Writer) {
-	header := createPduHeader(transactionId, pdu)
-	conn.Write(header)
-	conn.Write(pdu.data)
-}
+	packet := make([]byte, len(pdu.data)+7)
+	binary.BigEndian.PutUint16(packet[0:2], transactionId)
+	binary.BigEndian.PutUint16(packet[2:4], pdu.protocol)
+	binary.BigEndian.PutUint16(packet[4:6], uint16(len(pdu.data)+1))
+	packet[6] = pdu.unit
 
-func createPduHeader(transactionId uint16, pdu ModbusPDU) []byte {
-	header := make([]byte, 7)
-	binary.BigEndian.PutUint16(header[0:2], transactionId)
-	binary.BigEndian.PutUint16(header[2:4], pdu.protocol)
-	binary.BigEndian.PutUint16(header[4:6], uint16(len(pdu.data)+1))
-	header[6] = pdu.unit
-	return header
+	for i, value := range pdu.data {
+		packet[7+i] = value
+	}
+
+	conn.Write(packet)
 }
 
 func readPdu(conn io.Reader, clog zerolog.Logger) (pdu *ModbusPDU, err error) {
