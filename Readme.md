@@ -44,6 +44,8 @@ A docker image can be built with
 
     docker build . -t yamprox
 
+Built Docker images can be found at https://hub.docker.com/repository/docker/dockerdanielp/yamprox.
+
 ## License
 
 The program is licensed under the GNU General Public License, version 3.
