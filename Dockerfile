@@ -7,5 +7,5 @@ COPY *.go *.mod *.sum ./
 RUN CGO_ENABLED=0 go build --ldflags '-extldflags "-static"'
 
 FROM scratch
-COPY --from=build /build/modbusproxy /bin/modbusproxy
-ENTRYPOINT ["/bin/modbusproxy"]
+COPY --from=build /build/yamprox /bin/yamprox
+ENTRYPOINT ["/bin/yamprox"]

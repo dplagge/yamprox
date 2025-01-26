@@ -1,3 +1,18 @@
+/* This file is part of yamprox.
+
+   Yamprox is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   yamprox is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with yamprox.  If not, see <http://www.gnu.org/licenses/>.
+*/
 package main
 
 import (
@@ -60,8 +75,8 @@ func start(cCtx *cli.Context) error {
 
 func main() {
 	app := &cli.App{
-		Name:  "modbusproxy",
-		Usage: "modbusproxy <server:port>\nCreates a proxy for a modbus server: modbus",
+		Name:  "yamprox",
+		Usage: "yamprox <server:port>\nCreates a proxy for a modbus server.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:  "port",
