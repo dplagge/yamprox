@@ -41,8 +41,17 @@ func sender(ch chan ModbusRequest, serverAddr string) {
 func startServerLoop(ch chan ModbusRequest, serverAddr string, clog zerolog.Logger) {
 	conn := connectToServer(serverAddr, clog)
 
+	// The mappings are used to map transaction IDs for the proxy-server connection to
+	// 1. the transaction IDs of the client-proxy connection,
+	// 2. the channel to write the responses to be picked up by the client response handler.
+	// Since the client specifies the ID, we could have conflicts otherwise.
+
 	var mappings sync.Map
+	// We have one routine to take the requests from the channel ch and write them to the server.
+	// That routine gives the request a new transaction ID and stores the mapping to the
+	// client transaction ID in the map.
 	go sendRequestsToServer(ch, conn, &mappings, clog)
+	// The response handler receives a
 	senderResponseHandler(conn, &mappings, clog)
 }
 
@@ -63,9 +72,11 @@ func sendRequestsToServer(ch chan ModbusRequest, conn net.Conn, mappings *sync.M
 	var nextTransactionId uint16 = 1
 	for req := range ch {
 		pdu := req.pdu
+		// Store a mapping from the transaction ID to the client transaction ID and the channel for the responses
+		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep})
+		// Write client request to server, but with own transaction ID
 		writePdu(nextTransactionId, pdu, conn)
 		clog.Debug().Uint16("clienttransaction", pdu.transaction).Uint16("servertransaction", nextTransactionId).Msg("Writing PDU to server")
-		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep})
 		nextTransactionId += 1
 	}
 }
@@ -78,9 +89,12 @@ func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logge
 			clog.Error().Msgf("Error when reading response: %v", err)
 			return
 		}
+		// Map the transaction ID of the server response to the transaction ID of the
+		// client request and the chanel for the client response handler
 		if entry, present := mappings.LoadAndDelete(pdu.transaction); present {
 			rh := entry.(ReplyHandler)
 			clog.Debug().Uint16("servertransaction", pdu.transaction).Uint16("clienttransaction", rh.clientTransaction).Int("datasize", len(pdu.data)).Msg("Read PDU from server")
+			// Replace transaction  in PDU and write it to client queue
 			rh.rep <- pdu.replaceTransaction(rh.clientTransaction)
 		} else {
 			clog.Error().Msgf("Unexpected transaction %v, ignoring", pdu.transaction)

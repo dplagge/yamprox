@@ -22,10 +22,17 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Handles a client connection by starting two routines, one for listening to
+// client requests, the other for sending server responses to the client.
+// The request is sent to the server via the given channel (see sendRequestsToServer)
 func handleClient(conn net.Conn, toServer chan ModbusRequest, clog zerolog.Logger) {
+	// This channel serves for sending incoming responses from the server to
+	// the handler for sending them to the client.
 	responses := make(chan ModbusPDU)
 
+	// Start the routine for sending responses from the server to the client
 	go clientResponseHandler(conn, responses, clog)
+	// Start the routine for accepting requests and sending them to the sender component
 	go clientRequestHandler(conn, responses, toServer, clog)
 }
 
@@ -42,12 +49,15 @@ func clientRequestHandler(conn net.Conn, responses chan ModbusPDU, toServer chan
 			return
 		}
 		clog.Debug().Uint16("clienttransaction", pdu.transaction).Int("datasize", len(pdu.data)).Msg("Received PDU from client")
+		// Just send the request together with the channel for the responses to the sender component
+		// The sender will then use the given channel to route responses back to the client response handler.
 		toServer <- ModbusRequest{*pdu, responses}
 	}
 }
 
 func clientResponseHandler(conn io.Writer, fromServer chan ModbusPDU, clog zerolog.Logger) {
 	for {
+		// A PDU comes from the server, we just write it back into the client connection
 		pdu := <-fromServer
 		clog.Debug().Uint16("clienttransaction", pdu.transaction).Msg("Writing response to client")
 		writePdu(pdu.transaction, pdu, conn)
