@@ -21,8 +21,11 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    - name: Package dist directory
+      run: mkdir dist ; cp LICENSE Readme.md yamprox dist
+
     - name: Archive artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Linux binary
-        path: yamprox
+        name: Yamprox Linux binary
+        path: dist
