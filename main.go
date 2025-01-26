@@ -34,8 +34,31 @@ func ModbusListener(listenTo string, serverAddr string) {
 	}
 }
 
-func main() {
+func setDebug(debug bool) {
+	if debug {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	} else {
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+}
 
+func start(cCtx *cli.Context) error {
+	if cCtx.Args().Len() != 1 {
+		cli.ShowAppHelp(cCtx)
+		os.Exit(1)
+	}
+	setDebug(cCtx.Bool("debug"))
+
+	server := cCtx.Args().Get(0)
+	port := cCtx.Int("port")
+	interf := cCtx.String("interface")
+	listenTo := fmt.Sprintf("%s:%d", interf, port)
+
+	ModbusListener(listenTo, server)
+	return nil
+}
+
+func main() {
 	app := &cli.App{
 		Name:  "modbusproxy",
 		Usage: "modbusproxy <server:port>\nCreates a proxy for a modbus server: modbus",
@@ -56,24 +79,7 @@ func main() {
 				Usage: "debug logging",
 			},
 		},
-		Action: func(cCtx *cli.Context) error {
-			if cCtx.Args().Len() != 1 {
-				cli.ShowAppHelp(cCtx)
-				os.Exit(1)
-			}
-			server := cCtx.Args().Get(0)
-			port := cCtx.Int("port")
-			interf := cCtx.String("interface")
-			listenTo := fmt.Sprintf("%s:%d", interf, port)
-			debug := cCtx.Bool("debug")
-			if debug {
-				zerolog.SetGlobalLevel(zerolog.DebugLevel)
-			} else {
-				zerolog.SetGlobalLevel(zerolog.InfoLevel)
-			}
-			ModbusListener(listenTo, server)
-			return nil
-		},
+		Action: start,
 	}
 
 	if err := app.Run(os.Args); err != nil {
