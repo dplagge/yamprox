@@ -27,6 +27,7 @@ import (
 type ReplyHandler struct {
 	clientTransaction uint16
 	rep               chan ModbusPDU
+	requestTime       time.Time
 }
 
 func sender(ch chan ModbusRequest, serverAddr string) {
@@ -51,6 +52,8 @@ func startServerLoop(ch chan ModbusRequest, serverAddr string, clog zerolog.Logg
 	// That routine gives the request a new transaction ID and stores the mapping to the
 	// client transaction ID in the map.
 	go sendRequestsToServer(ch, conn, &mappings, clog)
+	// Start a loop that removes old requests in case they do not get answered
+	go cleanupDanglingRequests(&mappings, clog)
 	// The response handler receives a
 	senderResponseHandler(conn, &mappings, clog)
 }
@@ -73,7 +76,7 @@ func sendRequestsToServer(ch chan ModbusRequest, conn net.Conn, mappings *sync.M
 	for req := range ch {
 		pdu := req.pdu
 		// Store a mapping from the transaction ID to the client transaction ID and the channel for the responses
-		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep})
+		mappings.Store(nextTransactionId, ReplyHandler{pdu.transaction, req.rep, time.Now()})
 		// Write client request to server, but with own transaction ID
 		writePdu(nextTransactionId, pdu, conn)
 		clog.Debug().Uint16("clienttransaction", pdu.transaction).Uint16("servertransaction", nextTransactionId).Msg("Writing PDU to server")
@@ -104,4 +107,18 @@ func senderResponseHandler(conn net.Conn, mappings *sync.Map, clog zerolog.Logge
 
 func (pdu ModbusPDU) replaceTransaction(newTransId uint16) ModbusPDU {
 	return ModbusPDU{newTransId, pdu.protocol, pdu.unit, pdu.data}
+}
+
+func cleanupDanglingRequests(mappings *sync.Map, clog zerolog.Logger) {
+	for t := range time.Tick(time.Minute * 1) {
+		lastRequestTime := t.Add(time.Duration(-5) * time.Minute)
+		mappings.Range(func(key any, value any) bool {
+			rh := value.(ReplyHandler)
+			if rh.requestTime.Before(lastRequestTime) {
+				mappings.Delete(key)
+				clog.Info().Msg("Deleted unanswered request (5 minutes)")
+			}
+			return true
+		})
+	}
 }
