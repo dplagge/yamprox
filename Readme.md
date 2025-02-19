@@ -40,7 +40,25 @@ The basic usage is:
 
 ## Docker Image
 
-A docker image can be built with
+### Starting the service with Docker Compose
+
+An example for a simple `docker-compose.yml` file that uses the pre-build image is:
+
+    services:
+      yamprox:
+        image: dplagge/yamprox:latest
+        command: "my-inverter.internal.network:502"
+        ports:
+          - 502:2502
+        restart: always
+
+You can start the service with
+
+    docker-compose up -d
+
+### Building the Docker image
+
+You can build a Docker image yourself with
 
     docker build . -t yamprox
 
